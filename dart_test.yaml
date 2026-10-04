@@ -1,0 +1,6 @@
+# Network tests are tagged `live` and excluded from the default run so CI stays
+# hermetic:
+#   flutter test --exclude-tags live    # default, hermetic
+#   flutter test --tags live            # opt in, needs network
+tags:
+  live:

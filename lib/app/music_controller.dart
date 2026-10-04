@@ -1,25 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
-import '../innertube/innertube_models.dart';
-import '../innertube/innertube_search_service.dart';
-import '../innertube/innertube_playback_service.dart';
 import '../player/music_player.dart';
+import '../services/youtube_music/innertube_search_service.dart';
+import '../services/youtube_music/playback/playback.dart';
 
 /// Owns search state and coordinates resolution with playback.
 final class MusicController extends ChangeNotifier {
   MusicController({
-    required InnerTubeSearchService searchService,
-    required InnerTubePlaybackService playbackService,
-    required MusicPlayer player,
-  }) : _searchService = searchService,
-       _playbackService = playbackService,
-       _player = player;
+    required this.searchService,
+    required this.playbackService,
+    required this.player,
+  });
 
-  final InnerTubeSearchService _searchService;
-  final InnerTubePlaybackService _playbackService;
-  final MusicPlayer _player;
-
-  MusicPlayer get player => _player;
+  final InnerTubeSearchService searchService;
+  final InnerTubePlaybackService playbackService;
+  final MusicPlayer player;
 
   String _query = '';
   List<InnerTubeSong> _results = const <InnerTubeSong>[];
@@ -55,7 +52,7 @@ final class MusicController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final results = await _searchService.searchSongs(normalized);
+      final results = await searchService.searchSongs(normalized);
       // A newer search already started; discard this stale response.
       if (generation != _searchGeneration) {
         return;
@@ -85,12 +82,12 @@ final class MusicController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final source = await _playbackService.resolve(song.videoId);
+      final source = await playbackService.resolve(song.videoId);
       // The user may have chosen something else while this was resolving.
       if (_selectedSong?.videoId != song.videoId) {
         return;
       }
-      await _player.play(source);
+      await player.play(source);
     } on Object catch (error) {
       if (_selectedSong?.videoId != song.videoId) {
         return;
@@ -100,7 +97,7 @@ final class MusicController extends ChangeNotifier {
     }
   }
 
-  Future<void> togglePlayPause() => _player.togglePlayPause();
+  Future<void> togglePlayPause() => player.togglePlayPause();
 
   /// Turns transport failures into something a user can act on.
   String _describe(Object error) {
@@ -119,8 +116,11 @@ final class MusicController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _searchService.close();
-    _playbackService.close();
+    searchService.dispose();
+    // Playback disposal is asynchronous: it stops the challenge runtimes and
+    // the PO token timer that the solvers own.
+    unawaited(playbackService.dispose());
+    player.dispose();
     super.dispose();
   }
 }

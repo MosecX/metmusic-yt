@@ -14,32 +14,36 @@ bundled resolver.
 
 ## How stream resolution works
 
-The InnerTube layer lives in `lib/innertube/` and mirrors the architecture used
-by BStream Music, reduced to what is verified to work today.
+The InnerTube engine lives in `lib/services/youtube_music/` and was ported from
+[BStream Music](https://github.com/nicobailon/bstream-music)'s
+`lib/services/youtube_music/` — the client ladder, the PO token / EJS solver
+stack, the deep range validator and the search parsers. Only the UI is ours.
 
 ### The client ladder
 
 YouTube does not accept every client identity, and the identities that work for
-searching are not the ones that work for playback. Each entry in the ladder was
-verified against the live API while building this app:
+searching are not the ones that work for playback. The registry
+(`lib/services/youtube_music/playback/innertube_client_profile.dart`) declares
+them all; the router (`innertube_client_router.dart`) picks eligible candidates
+per request and remembers which ones are healthy.
 
 | Client | Search | Playback | Notes |
 | --- | --- | --- | --- |
 | `iosMusic` (26) | yes | no (`LOGIN_REQUIRED`) | Primary search client |
 | `androidMusic` (21) | yes | no (`LOGIN_REQUIRED`) | Search fallback |
-| `ios` (5) | no | **yes** | Returns direct, unciphered audio URLs |
-| `android` (3) | no | no | `OK` but withholds all stream URLs |
+| `visionOS` | no | yes, with a PO token | Primary playback client |
+| `androidSdkless` | no | yes, with a PO token | Playback fallback |
+| `tv`, `webMusic`, `mweb` | no | with a PO token | Later fallbacks |
 
-Consequences baked into the design:
+Two consequences are baked into the design:
 
 - **Search only works with a music client.** The desktop web client is rejected
   outright and the generic Android client answers with non-music renderers.
-- **Playback only works with the `ios` client.** It returns audio formats with a
-  ready `url`, so no PO token and no JavaScript signature solver are needed.
-  Formats behind a `signatureCipher` are discarded, because this app ships no
-  EJS runtime to decipher them.
-- **The `User-Agent` is mandatory on playback.** googlevideo binds each media
-  URL to the client identity that produced it and answers `403` without it.
+- **Playback needs a Web PO token.** The clients that return audio URLs only do
+  so when the request carries a BotGuard PO token. `ios` and `android` are
+  marked `unsupportedByWebPo` and excluded by the router on purpose: they need a
+  platform attestation provider that does not exist, so the engine never sends
+  requests that are guaranteed to be rejected.
 
 ### Request flow
 
@@ -47,51 +51,53 @@ Consequences baked into the design:
    from `music.youtube.com` (cached; the key rotates, so it is never hardcoded).
 2. `POST /youtubei/v1/search` with the music client ladder, failing over to the
    next client when one is rejected.
-3. `POST /youtubei/v1/player` with the playback ladder, then rank the returned
-   audio formats by bitrate, preferring M4A/AAC as a tie-breaker.
-4. Probe each candidate with a bounded range read before publishing it, so a URL
+3. `POST /youtubei/v1/player` with the playback ladder, ranking the returned
+   audio formats by bitrate and preferring M4A/AAC as a tie-breaker.
+4. Probe each candidate with a **deep** range read before publishing it, so a URL
    that resolves but cannot be fetched is caught here rather than silently
    failing in the player.
+5. Stream through `StreamProxy` (see below).
+
+### PO tokens and the WebView
+
+The PO token and EJS solvers run BotGuard inside a headless WebView, because
+BotGuard fingerprints its environment and refuses to install its minter without
+a real browser. `HeadlessInAppWebViewJavaScriptRuntime` is backed by
+`flutter_inappwebview`, which also intercepts requests natively and so bypasses
+the CORS wall that blocks a plain WebView.
+
+They are only constructed on platforms that have a WebView
+(`lib/main.dart`), which today means **Android and iOS only**. On desktop they
+are omitted rather than stubbed, and the router narrows the ladder accordingly —
+desktop can search but is not expected to play.
 
 ### Why playback goes through a local proxy
 
-Two upstream behaviours, both measured against the live CDN, break direct
-playback:
-
-1. **The player opens with an open-ended range.** ExoPlayer's first request is
-   `Range: bytes=0-`, which googlevideo answers with **403**. Only bounded
-   ranges are served. This was the cause of `Playback failed: Source error`.
-2. **Only about the first 1 MiB is reachable.** Requests for offsets beyond
-   that are refused with 403 even on a freshly resolved URL, so the ceiling is
-   not per-URL and re-resolving alone does not extend it.
+ExoPlayer's first request is `Range: bytes=0-`, an open-ended range, which
+googlevideo answers with **403**. Only bounded ranges are served. This was the
+cause of `Playback failed: Source error`.
 
 `StreamProxy` (`lib/player/stream_proxy.dart`) listens on loopback and answers
-whatever the player asks for using bounded 256 KiB upstream reads. The player's
-open-ended request becomes a working `206`. The proxy also keeps the
+whatever the player asks for using bounded 256 KiB upstream reads, so the
+player's open-ended request becomes a working `206`. The proxy also keeps the
 identity-bound User-Agent and the signed URL inside the app instead of handing
-them to the platform player.
+them to the platform player. Android's cleartext block is satisfied by
+`android/app/src/main/res/xml/network_security_config.xml`, which permits HTTP
+**only** on loopback.
 
-Known limitation: with the current client, playback reaches roughly the first
-1 MiB of a track (around 50 seconds of audio) before upstream refuses further
-offsets. Seeking within that window works. Playing a whole track needs a client
-identity that does not carry this ceiling; `InnerTubeClientRegistry.playbackLadder`
-is where a new identity would be added.
-
-### The stream probe size
-
-`InnerTubeStreamValidator` probes with a 512 KiB range. This is measured, not
-assumed: against the live `ios` client, ranged requests up to 1 MiB are served
-while a 1.5 MiB range returns `403`, even though the same URL serves a 1 KiB
-range fine. BStream probes 3 MiB, which is rejected here.
+If the CDN stops serving partway through a track, the proxy reports the stall and
+the player transparently re-resolves and resumes at the same position.
 
 ## Project layout
 
 ```text
 lib/
-  innertube/        InnerTube transport, client ladder, parsers, resolver
-  app/              app-level state (search + playback coordination)
-  player/           just_audio wrapper
-  ui/               search page and mini player
+  services/youtube_music/   ported InnerTube engine: transport, client ladder,
+                            search parsers, PO token + EJS solvers, resolver
+  core/                     platform detection, bounded byte stream
+  app/                      app-level state (search + playback coordination)
+  player/                   just_audio wrapper and the loopback stream proxy
+  ui/                       search page and mini player
 ```
 
 The transport is an interface (`InnerTubeTransport`) so a platform without
@@ -124,20 +130,20 @@ only; see [Release signing](#release-signing) before distributing them.
 ## Tests
 
 ```bash
-flutter test
+flutter test --exclude-tags live   # hermetic, what CI runs
 ```
 
-Parser tests run against fixtures captured from the real API
-(`test/fixtures.dart`), preserving the real renderer shapes.
+The engine's parser, resolver, validator and PO token tests are ported from
+BStream, so the resolution layer is covered by the suite that shipped it.
 
-A separate script exercises the live network path:
+A tagged suite exercises the live network path — real search, real resolution,
+and a deep read through the proxy to catch the ~1 MiB ceiling regressing:
 
 ```bash
-dart run test/live_innertube.dart          # searches and resolves for real
-QUERY="pink floyd" dart run test/live_innertube.dart
+flutter test --tags live
 ```
 
-It is not part of `flutter test`, so CI never depends on a third-party service.
+It is excluded from the default run so CI never depends on a third-party service.
 
 ## Release signing
 
@@ -160,13 +166,16 @@ These environment variables are also supported:
 
 ## Limitations
 
-- **Android only.** A browser build is not possible as written:
-  `music.youtube.com` sends no `Access-Control-Allow-Origin` headers and its
-  preflight returns `403`, so the browser blocks the API. Supporting web would
-  require a proxy.
-- Playback depends on the `ios` client being accepted. If YouTube retires it,
-  playback breaks until a new client is verified and added to
-  `InnerTubeClientRegistry`.
+- **Playback needs Android or iOS.** The PO token solvers require a WebView. On
+  desktop the app searches but has no way to mint tokens, so playback is not
+  expected to resolve.
+- **A browser build is not possible as written**: `music.youtube.com` sends no
+  `Access-Control-Allow-Origin` headers and its preflight returns `403`, so the
+  browser blocks the API.
+- Playback depends on YouTube continuing to accept the clients in
+  `InnerTubeClientRegistry`, and on BotGuard's handshake continuing to work.
+  Both are internal behaviours that change without notice; when they do, the
+  ladder is where a replacement identity is added.
 - No offline downloads, playlists, lyrics or account sync.
 
 ## Notes

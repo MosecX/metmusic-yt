@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../innertube/innertube_models.dart';
 import '../player/music_player.dart';
+import '../services/youtube_music/playback/playback.dart';
 
 /// Persistent bottom bar showing the current track and transport controls.
 class MiniPlayer extends StatelessWidget {
@@ -130,7 +130,7 @@ class _Artwork extends StatelessWidget {
   const _Artwork({required this.url, required this.source});
 
   final String? url;
-  final InnerTubePlaybackSource? source;
+  final InnerTubeResolvedAudio? source;
 
   @override
   Widget build(BuildContext context) {
