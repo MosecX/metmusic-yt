@@ -124,6 +124,9 @@ final class StreamProxy {
             ? HttpStatus.partialContent
             : HttpStatus.ok
         ..headers.set(HttpHeaders.acceptRangesHeader, 'bytes')
+        // Declared before the first byte is written, because the headers are
+        // flushed as soon as the body starts. ExoPlayer derives the track
+        // duration from this and refuses to seek without it.
         ..headers.contentLength = end - start + 1;
 
       if (isPartial) {
@@ -133,7 +136,10 @@ final class StreamProxy {
         );
       }
 
-      await _pipe(request.response, start, end);
+      // A short delivery is reported so the player can re-resolve, but the
+      // declared length stands: a truncated transfer is what makes ExoPlayer
+      // retry the range, which is what we want.
+      await _pipe(request, start, end);
     } on Object {
       // The player disconnected (seek or skip); nothing to recover.
     } finally {
@@ -146,7 +152,11 @@ final class StreamProxy {
   }
 
   /// Streams `[start, end]` using bounded upstream requests.
-  Future<void> _pipe(HttpResponse response, int start, int end) async {
+///
+/// Returns how many bytes were actually written, which can be fewer than
+/// requested when upstream refuses a deep range.
+  Future<int> _pipe(HttpRequest request, int start, int end) async {
+    final response = request.response;
     var position = start;
     while (position <= end) {
       final chunkEnd = math.min(position + chunkSize - 1, end);
@@ -159,11 +169,12 @@ final class StreamProxy {
           onUpstreamStalled?.call();
         }
         // Nothing more will arrive; close early rather than hang the player.
-        return;
+        return position - start;
       }
       response.add(bytes);
       position += bytes.length;
     }
+    return position - start;
   }
 
   /// One bounded ranged request against googlevideo.

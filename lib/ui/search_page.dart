@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../app/music_controller.dart';
-import 'mini_player.dart';
+import 'expanded_player.dart';
+import 'player_bar.dart';
+import 'seek_bar.dart';
 
-/// Search screen: query field, results list, and the mini player.
+/// Search screen: query field, results list, and the floating player bar.
 class SearchPage extends StatefulWidget {
   const SearchPage({super.key, required this.controller});
 
@@ -28,6 +30,15 @@ class _SearchPageState extends State<SearchPage> {
     widget.controller.search(value);
   }
 
+  /// Opens the full player, collapsing the keyboard first so the sheet is not
+  /// pushed halfway off screen.
+  void _openPlayer() {
+    FocusScope.of(context).unfocus();
+    Navigator.of(context).push(
+      expandedPlayerRoute(player: widget.controller.player),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
@@ -37,7 +48,8 @@ class _SearchPageState extends State<SearchPage> {
       builder: (context, _) {
         final player = controller.player;
         final selected = controller.selectedSong;
-        final showPlayer = player.hasTrack || player.isLoading || selected != null;
+        final showPlayer =
+            player.currentTrack != null || player.isLoading || selected != null;
 
         return Scaffold(
           appBar: AppBar(
@@ -74,17 +86,29 @@ class _SearchPageState extends State<SearchPage> {
               ),
             ),
           ),
-          body: Column(
+          // The bar floats over the list so the glass blur has content behind
+          // it, which is what gives the effect something to sample.
+          extendBody: true,
+          body: Stack(
             children: [
-              Expanded(child: _buildBody(controller)),
+              Positioned.fill(
+                child: Column(
+                  children: [
+                    Expanded(child: _buildBody(controller)),
+                    // Reserve room so the last row is not hidden behind the bar.
+                    if (showPlayer) const SizedBox(height: 96),
+                  ],
+                ),
+              ),
               if (showPlayer)
-                MiniPlayer(
-                  player: player,
-                  title: selected?.title ?? 'Resolving stream...',
-                  subtitle: selected?.artist ?? '',
-                  artworkUrl: selected?.thumbnailUrl,
-                  onTogglePlayPause: controller.togglePlayPause,
-                  onNext: () => player.stop(),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: PlayerBar(
+                    player: player,
+                    onExpand: _openPlayer,
+                  ),
                 ),
             ],
           ),
@@ -127,7 +151,7 @@ class _SearchPageState extends State<SearchPage> {
         final isSelected = controller.selectedSong?.videoId == song.videoId;
         final player = controller.player;
         final isThisPlaying =
-            isSelected && player.currentSource?.videoId == song.videoId;
+            isSelected && player.currentTrack?.videoId == song.videoId;
 
         return ListTile(
           selected: isSelected,
@@ -171,7 +195,7 @@ class _SearchPageState extends State<SearchPage> {
             children: [
               if (song.duration != null)
                 Text(
-                  _formatDuration(song.duration!),
+                  formatClock(song.duration!),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               if (isSelected)
@@ -189,12 +213,6 @@ class _SearchPageState extends State<SearchPage> {
         );
       },
     );
-  }
-
-  static String _formatDuration(Duration duration) {
-    final minutes = duration.inMinutes;
-    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
   }
 }
 

@@ -10,7 +10,10 @@ bundled resolver.
   artist, album and duration.
 - Resolve any track to a directly playable audio stream and play it through
   `just_audio`.
-- A persistent mini player with progress, play/pause and stop.
+- A media session: lock screen and notification controls, and playback that
+  survives the app being backgrounded.
+- A floating glass player bar with a draggable seek bar, and a full player that
+  expands from it.
 
 ## How stream resolution works
 
@@ -110,7 +113,8 @@ lib/
   core/                     platform detection, bounded byte stream
   app/                      app-level state (search + playback coordination)
   player/                   just_audio wrapper and the loopback stream proxy
-  ui/                       search page and mini player
+  app/                      service wiring and app-level state
+  ui/                       search page, floating player bar, expanded player
 ```
 
 The transport is an interface (`InnerTubeTransport`) so a platform without
@@ -179,6 +183,8 @@ These environment variables are also supported:
 
 ## Limitations
 
+- **No shuffle or repeat.** The queue is the current result set; there is no
+  reordering or persistence across sessions.
 - **Playback needs Android or iOS.** The PO token solvers require a WebView. On
   desktop the app searches but has no way to mint tokens, so playback is not
   expected to resolve.

@@ -39,6 +39,7 @@ dependencies:
   flutter_inappwebview: ^6.1.5
   crypto: ^3.0.7
   shared_preferences: ^2.5.5
+  audio_service: ^0.18.19
 
 dev_dependencies:
   flutter_test:

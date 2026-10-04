@@ -1,79 +1,49 @@
-import 'dart:ui';
-
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 
+import 'app/app_services.dart';
 import 'app/music_controller.dart';
-import 'core/platform/app_platform.dart';
-import 'player/music_player.dart';
-import 'services/youtube_music/innertube_search_service.dart';
-import 'services/youtube_music/playback/playback.dart';
-import 'services/youtube_music/shared_preferences_visitor_data_store.dart';
+import 'player/audio_handler.dart';
 import 'ui/search_page.dart';
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MetMusicApp());
-}
+/// Kept so the session can be torn down with the app.
+AppAudioHandler? sessionHandler;
 
-String _deviceRegion() {
-  final country = PlatformDispatcher.instance.locale.countryCode
-      ?.trim()
-      .toUpperCase();
-  return country != null && RegExp(r'^[A-Z]{2}$').hasMatch(country)
-      ? country
-      : 'US';
-}
-
-/// Builds the InnerTube services and the player for the widget tree.
+/// Entry point.
 ///
-/// The PO token and EJS solvers need a real WebView, which only exists on
-/// Android and iOS. On desktop they are omitted rather than stubbed, so the
-/// resolver falls back to clients that answer without them.
-MusicController createController() {
-  final platform = AppPlatform.current;
-  final supportsChallenges = HeadlessInAppWebViewJavaScriptRuntime.supportsPlatform(
-    platform,
+/// The media session must be initialised before the first frame; otherwise the
+/// Android notification service is never registered, so there is no lock screen
+/// control and the process can be reclaimed mid-playback.
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final services = AppServices.create();
+  sessionHandler = await AudioService.init<AppAudioHandler>(
+    builder: () => AppAudioHandler(services.player),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.example.metmusic.playback',
+      androidNotificationChannelName: 'Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    ),
   );
 
-  final searchService = InnerTubeSearchService();
-
-  final playbackService = InnerTubePlaybackService(
-    visitorDataStore: const SharedPreferencesInnerTubeVisitorDataStore(),
-    ejsSolver: supportsChallenges
-        ? EjsSolver(runtime: HeadlessInAppWebViewJavaScriptRuntime())
-        : null,
-    poTokenProvider: supportsChallenges ? BotGuardPoTokenProvider() : null,
-    audioFormatPredicate: platform == AppPlatformType.ios
-        ? isAvFoundationCompatibleInnerTubeAudio
-        : null,
-    language: PlatformDispatcher.instance.locale.languageCode,
-    region: _deviceRegion(),
-  );
-
-  // The player asks the proxy for a replacement source when the current
-  // stream URL runs out.
-  final player = MusicPlayer(resolveSource: playbackService.resolve);
-
-  return MusicController(
-    searchService: searchService,
-    playbackService: playbackService,
-    player: player,
-  );
+  runApp(MetMusicApp(controller: MusicController(services)));
 }
 
 class MetMusicApp extends StatefulWidget {
-  const MetMusicApp({super.key});
+  const MetMusicApp({super.key, required this.controller});
+
+  final MusicController controller;
 
   @override
   State<MetMusicApp> createState() => _MetMusicAppState();
 }
 
 class _MetMusicAppState extends State<MetMusicApp> {
-  late final MusicController _controller = createController();
-
   @override
   void dispose() {
-    _controller.dispose();
+    widget.controller.dispose();
     super.dispose();
   }
 
@@ -93,7 +63,7 @@ class _MetMusicAppState extends State<MetMusicApp> {
         ),
         useMaterial3: true,
       ),
-      home: SearchPage(controller: _controller),
+      home: SearchPage(controller: widget.controller),
     );
   }
 }

@@ -2,18 +2,19 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'app_services.dart';
 import '../player/music_player.dart';
 import '../services/youtube_music/innertube_search_service.dart';
 import '../services/youtube_music/playback/playback.dart';
 
 /// Owns search state and coordinates resolution with playback.
 final class MusicController extends ChangeNotifier {
-  MusicController({
-    required this.searchService,
-    required this.playbackService,
-    required this.player,
-  });
+  MusicController(this.services)
+    : searchService = services.search,
+      playbackService = services.playback,
+      player = services.player;
 
+  final AppServices services;
   final InnerTubeSearchService searchService;
   final InnerTubePlaybackService playbackService;
   final MusicPlayer player;
@@ -81,13 +82,36 @@ final class MusicController extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
+    // The whole result set becomes the queue, so next/previous have somewhere
+    // to go. It is installed before resolving so the session and the bar show
+    // the selection immediately rather than after the round trip.
+    final tracks = results
+        .map(
+          (entry) => PlayableTrack(
+            videoId: entry.videoId,
+            title: entry.title,
+            artist: entry.artist,
+            thumbnailUrl: entry.thumbnailUrl,
+          ),
+        )
+        .toList(growable: false);
+    player.setQueue(tracks, startVideoId: song.videoId);
+    player.publishTrack();
+
     try {
-      final source = await playbackService.resolve(song.videoId);
+      await player.playTrack(
+        PlayableTrack(
+          videoId: song.videoId,
+          title: song.title,
+          artist: song.artist,
+          thumbnailUrl: song.thumbnailUrl,
+        ),
+      );
       // The user may have chosen something else while this was resolving.
       if (_selectedSong?.videoId != song.videoId) {
         return;
       }
-      await player.play(source);
+      _errorMessage = player.errorMessage;
     } on Object catch (error) {
       if (_selectedSong?.videoId != song.videoId) {
         return;
@@ -116,11 +140,9 @@ final class MusicController extends ChangeNotifier {
 
   @override
   void dispose() {
-    searchService.dispose();
     // Playback disposal is asynchronous: it stops the challenge runtimes and
     // the PO token timer that the solvers own.
-    unawaited(playbackService.dispose());
-    player.dispose();
+    unawaited(services.dispose());
     super.dispose();
   }
 }
