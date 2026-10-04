@@ -20,17 +20,24 @@ void main() {
 MusicController createController() {
   final transport = IoInnerTubeTransport();
   final bootstrap = InnerTubeBootstrapService(transport: transport);
-  final player = MusicPlayer();
+
+  final searchService = InnerTubeSearchService(
+    transport: transport,
+    bootstrap: bootstrap,
+  );
+  final playbackService = InnerTubePlaybackService(
+    transport: transport,
+    bootstrap: bootstrap,
+  );
+  // The player asks the proxy for a replacement source when the current
+  // stream URL runs out.
+  final player = MusicPlayer(
+    resolveSource: playbackService.resolve,
+  );
 
   return MusicController(
-    searchService: InnerTubeSearchService(
-      transport: transport,
-      bootstrap: bootstrap,
-    ),
-    playbackService: InnerTubePlaybackService(
-      transport: transport,
-      bootstrap: bootstrap,
-    ),
+    searchService: searchService,
+    playbackService: playbackService,
     player: player,
   );
 }

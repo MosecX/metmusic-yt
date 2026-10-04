@@ -53,6 +53,30 @@ Consequences baked into the design:
    that resolves but cannot be fetched is caught here rather than silently
    failing in the player.
 
+### Why playback goes through a local proxy
+
+Two upstream behaviours, both measured against the live CDN, break direct
+playback:
+
+1. **The player opens with an open-ended range.** ExoPlayer's first request is
+   `Range: bytes=0-`, which googlevideo answers with **403**. Only bounded
+   ranges are served. This was the cause of `Playback failed: Source error`.
+2. **Only about the first 1 MiB is reachable.** Requests for offsets beyond
+   that are refused with 403 even on a freshly resolved URL, so the ceiling is
+   not per-URL and re-resolving alone does not extend it.
+
+`StreamProxy` (`lib/player/stream_proxy.dart`) listens on loopback and answers
+whatever the player asks for using bounded 256 KiB upstream reads. The player's
+open-ended request becomes a working `206`. The proxy also keeps the
+identity-bound User-Agent and the signed URL inside the app instead of handing
+them to the platform player.
+
+Known limitation: with the current client, playback reaches roughly the first
+1 MiB of a track (around 50 seconds of audio) before upstream refuses further
+offsets. Seeking within that window works. Playing a whole track needs a client
+identity that does not carry this ceiling; `InnerTubeClientRegistry.playbackLadder`
+is where a new identity would be added.
+
 ### The stream probe size
 
 `InnerTubeStreamValidator` probes with a 512 KiB range. This is measured, not
