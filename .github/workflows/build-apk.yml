@@ -1,0 +1,160 @@
+name: Build APK
+
+# Builds the Android APKs on GitHub's runners and publishes them as workflow
+# artifacts, so no local Android toolchain or SDK is needed.
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs once, so analysis and tests are not repeated per ABI.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      # Style hints are informational; errors and warnings still fail the run.
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Test
+        run: flutter test
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: arm64-v8a
+            abi: android-arm64
+          - target: armeabi-v7a
+            abi: android-arm
+          - target: x86_64
+            abi: android-x64
+          - target: universal
+            abi: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Assemble release APK
+        # An empty matrix.abi builds the universal APK.
+        run: |
+          set -euo pipefail
+          if [ -n "${{ matrix.abi }}" ]; then
+            flutter build apk --release --target-platform "${{ matrix.abi }}"
+          else
+            flutter build apk --release
+          fi
+
+      - name: Collect APKs
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          found=0
+          for apk in build/app/outputs/flutter-apk/*.apk; do
+            [ -e "$apk" ] || continue
+            found=1
+            name=$(basename "$apk" .apk)
+            cp "$apk" "dist/metmusic-${{ matrix.target }}-$name.apk"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No APK was produced." >&2
+            exit 1
+          fi
+          ls -lh dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: metmusic-apk-${{ matrix.target }}
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  # Fails loudly if a matrix variant produced no artifact.
+  summary:
+    name: Artifact summary
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+          pattern: metmusic-apk-*
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Report
+        run: |
+          set -uo pipefail
+          count=$(find downloaded -name '*.apk' 2>/dev/null | wc -l)
+          {
+            echo "## Android APKs"
+            echo
+            if [ "$count" -eq 0 ]; then
+              echo "> No APKs were uploaded. See the build logs for errors."
+            else
+              echo "| File | Size |"
+              echo "| --- | --- |"
+              find downloaded -name '*.apk' -printf '| %f | %s bytes |\n' | sort
+            fi
+            echo
+            echo "Download each variant from this run's **Artifacts** section."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Found $count APK(s)."

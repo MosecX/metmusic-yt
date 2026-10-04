@@ -1,0 +1,18 @@
+# Template for release signing.
+#
+# Copy this file to android/key.properties and fill in real values. The
+# keystore itself must live outside the repository; only this file is
+# committed (as this example).
+#
+# key.properties, *.jks and *.keystore are excluded from Git.
+#
+# The equivalent environment variables are also honoured:
+#   METMUSIC_ANDROID_STORE_FILE
+#   METMUSIC_ANDROID_STORE_PASSWORD
+#   METMUSIC_ANDROID_KEY_ALIAS
+#   METMUSIC_ANDROID_KEY_PASSWORD
+
+storeFile=../release/keystore.jks
+storePassword=your-store-password
+keyAlias=metmusic
+keyPassword=your-key-password
