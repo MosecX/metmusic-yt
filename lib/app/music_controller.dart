@@ -5,18 +5,15 @@ import 'package:flutter/foundation.dart';
 import 'app_services.dart';
 import '../player/music_player.dart';
 import '../services/youtube_music/innertube_search_service.dart';
-import '../services/youtube_music/playback/playback.dart';
 
 /// Owns search state and coordinates resolution with playback.
 final class MusicController extends ChangeNotifier {
   MusicController(this.services)
     : searchService = services.search,
-      playbackService = services.playback,
       player = services.player;
 
   final AppServices services;
   final InnerTubeSearchService searchService;
-  final InnerTubePlaybackService playbackService;
   final MusicPlayer player;
 
   String _query = '';
@@ -96,7 +93,6 @@ final class MusicController extends ChangeNotifier {
         )
         .toList(growable: false);
     player.setQueue(tracks, startVideoId: song.videoId);
-    player.publishTrack();
 
     try {
       await player.playTrack(

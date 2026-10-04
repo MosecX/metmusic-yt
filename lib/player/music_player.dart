@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../services/youtube_music/playback/playback.dart';
+import 'playback_queue.dart';
 import 'stream_proxy.dart';
+
+export 'playback_queue.dart' show PlayableTrack;
 
 /// Re-resolves a playable source for [videoReference].
 ///
@@ -13,28 +16,6 @@ import 'stream_proxy.dart';
 /// replacement when the current one stops serving.
 typedef SourceResolver =
     Future<InnerTubeResolvedAudio> Function(String videoReference);
-
-/// The metadata the session and the player chrome display for one entry.
-final class PlayableTrack {
-  const PlayableTrack({
-    required this.videoId,
-    required this.title,
-    required this.artist,
-    this.thumbnailUrl,
-  });
-
-  final String videoId;
-  final String title;
-  final String artist;
-  final String? thumbnailUrl;
-
-  @override
-  bool operator ==(Object other) =>
-      other is PlayableTrack && other.videoId == videoId;
-
-  @override
-  int get hashCode => videoId.hashCode;
-}
 
 /// Wraps `just_audio` for streaming audio resolved by the InnerTube engine.
 ///
@@ -71,13 +52,12 @@ final class MusicPlayer extends ChangeNotifier {
   Stream<Duration?> get durationStream => _player.durationStream;
   Stream<bool> get playingStream => _player.playingStream;
 
-  final StreamController<PlayableTrack?> _trackController =
-      StreamController<PlayableTrack?>.broadcast();
   final StreamController<String?> _errorController =
       StreamController<String?>.broadcast();
+  late final PlaybackQueue _queue = PlaybackQueue(onChange: _onTrackChanged);
 
   /// Emits whenever the selected entry changes, including on queue moves.
-  Stream<PlayableTrack?> get trackStream => _trackController.stream;
+  Stream<PlayableTrack?> get trackStream => _queue.changes;
 
   /// Emits whenever [errorMessage] changes.
   Stream<String?> get errorStream => _errorController.stream;
@@ -94,9 +74,6 @@ final class MusicPlayer extends ChangeNotifier {
 
   bool _disposed = false;
 
-  final List<PlayableTrack> _queue = <PlayableTrack>[];
-  int _queueIndex = -1;
-
   InnerTubeResolvedAudio? get currentSource => _currentSource;
   String? get errorMessage => _errorMessage;
   bool get isLoading => _isLoading;
@@ -108,16 +85,13 @@ final class MusicPlayer extends ChangeNotifier {
   double get speed => _player.speed;
   ProcessingState get processingState => _player.processingState;
   bool get hasTrack => _currentSource != null;
-  List<PlayableTrack> get queue => List<PlayableTrack>.unmodifiable(_queue);
+  List<PlayableTrack> get queue => _queue.tracks;
 
   /// The entry the player is on, or null before anything is selected.
-  PlayableTrack? get currentTrack =>
-      _queueIndex >= 0 && _queueIndex < _queue.length
-      ? _queue[_queueIndex]
-      : null;
+  PlayableTrack? get currentTrack => _queue.current;
 
-  bool get hasNext => _queueIndex >= 0 && _queueIndex < _queue.length - 1;
-  bool get hasPrevious => _queueIndex > 0;
+  bool get hasNext => _queue.hasNext;
+  bool get hasPrevious => _queue.hasPrevious;
 
   /// Whether a full source duration is known yet.
   ///
@@ -134,14 +108,9 @@ final class MusicPlayer extends ChangeNotifier {
   ///
   /// Returns the resolved index, or -1 when [startVideoId] is not in [tracks].
   int setQueue(List<PlayableTrack> tracks, {String? startVideoId}) {
-    _queue
-      ..clear()
-      ..addAll(tracks);
-    _queueIndex = startVideoId == null
-        ? (tracks.isEmpty ? -1 : 0)
-        : tracks.indexWhere((track) => track.videoId == startVideoId);
+    final index = _queue.load(tracks, startVideoId: startVideoId);
     notifyListeners();
-    return _queueIndex;
+    return index;
   }
 
   /// Resolves [track] and plays it.
@@ -149,10 +118,7 @@ final class MusicPlayer extends ChangeNotifier {
   /// This is the entry point for queue playback; callers that already hold a
   /// resolved source should use [play] directly.
   Future<void> playTrack(PlayableTrack track) async {
-    final index = _queue.indexWhere((entry) => entry.videoId == track.videoId);
-    if (index >= 0) {
-      _queueIndex = index;
-    }
+    _queue.select(track.videoId);
     await _load(track.videoId);
   }
 
@@ -303,21 +269,21 @@ final class MusicPlayer extends ChangeNotifier {
   }
 
   Future<void> skipToNext() async {
-    if (!hasNext) {
+    final track = _queue.advance() ? _queue.current : null;
+    if (track == null) {
       return;
     }
-    _queueIndex++;
     notifyListeners();
-    await _load(currentTrack!.videoId);
+    await _load(track.videoId);
   }
 
   Future<void> skipToPrevious() async {
-    if (!hasPrevious) {
+    final track = _queue.retreat() ? _queue.current : null;
+    if (track == null) {
       return;
     }
-    _queueIndex--;
     notifyListeners();
-    await _load(currentTrack!.videoId);
+    await _load(track.videoId);
   }
 
   Future<void> seek(Duration position) => _player.seek(position);
@@ -359,11 +325,13 @@ final class MusicPlayer extends ChangeNotifier {
     }
   }
 
-  /// Publishes the current track to the session stream.
-  void publishTrack() {
-    if (!_trackController.isClosed) {
-      _trackController.add(currentTrack);
-    }
+  /// Publishes the current track so the session updates its metadata.
+  ///
+  /// Called from every path that can change the selection, including queue
+  /// moves: without it the notification would keep showing the previous title
+  /// and artwork after next or previous.
+  void _onTrackChanged(PlayableTrack? track) {
+    notifyListeners();
   }
 
   static String _describe(Object error) => error.toString();
@@ -387,7 +355,7 @@ final class MusicPlayer extends ChangeNotifier {
     _bufferedSubscription.cancel();
     _closeProxy();
     _player.dispose();
-    _trackController.close();
+    _queue.dispose();
     _errorController.close();
     super.dispose();
   }

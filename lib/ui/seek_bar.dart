@@ -162,15 +162,11 @@ class _SeekBarState extends State<SeekBar> {
     );
   }
 
-  static String _format(int milliseconds) {
-    final total = Duration(milliseconds: milliseconds);
-    final minutes = total.inMinutes;
-    final seconds = total.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$minutes:$seconds';
-  }
+  static String _format(int milliseconds) =>
+      formatClock(Duration(milliseconds: milliseconds));
 }
 
-/// Formats a duration as `m:ss`, used by the player chrome.
+/// Formats a duration as `m:ss`.
 String formatClock(Duration duration) {
   final minutes = duration.inMinutes;
   final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
