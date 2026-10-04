@@ -19,8 +19,12 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.1.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.4.0" apply false
+    // AGP is held at 8.x because flutter_inappwebview_android 1.1.3 is not yet
+    // compatible with AGP 9: it calls getDefaultProguardFile("proguard-android.txt"),
+    // which AGP 9 rejects at configuration time. Raise this once the plugin ships
+    // an AGP 9 release, then drop the explicit Kotlin plugin in app/build.gradle.kts.
+    id("com.android.application") version "8.12.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
 }
 
 include(":app")
