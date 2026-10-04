@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Playback is served through a loopback HTTP proxy (see
+  lib/player/stream_proxy.dart). ExoPlayer cannot supply the identity-bound
+  User-Agent that googlevideo requires, and it opens with an open-ended range
+  the CDN refuses, so the proxy answers on 127.0.0.1 instead.
+
+  Android blocks cleartext HTTP by default (API 28+), which would make that
+  loopback request fail on a release build. Cleartext is therefore permitted
+  for loopback addresses ONLY.
+
+  Every remote endpoint still requires HTTPS: there is no
+  cleartextTrafficPermitted="true" at the base config, so a real network
+  request over plain HTTP remains blocked.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+
+    <!-- All other traffic stays HTTPS-only. -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
