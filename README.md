@@ -88,6 +88,19 @@ them to the platform player. Android's cleartext block is satisfied by
 If the CDN stops serving partway through a track, the proxy reports the stall and
 the player transparently re-resolves and resumes at the same position.
 
+### The depth ceiling, and what removed it
+
+Before the PO token stack existed, this app could only read about the **first
+1 MiB** of a track — roughly 50 seconds — no matter which client it asked. The
+refusal appeared even on a freshly resolved URL, so it was not a per-URL budget,
+and re-resolving did not extend it. The CDN serves the opening chunk and then
+answers 403 for deeper ranges when the request carries no BotGuard PO token.
+
+With the solvers wired up, whole tracks play through. Verified on device with a
+4:01 track playing to completion. `flutter test --tags live` keeps a guard for
+this: it reads through the proxy and fails if a track dies below 2 MiB, so the
+ceiling cannot silently come back.
+
 ## Project layout
 
 ```text
